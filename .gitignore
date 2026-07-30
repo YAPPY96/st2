@@ -1,0 +1,49 @@
+```
+# Dependencies
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Docker
+.dockerenv
+Dockerfile*
+docker-compose*
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build and distribution
+dist/
+build/
+*.egg-info/
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*$pycache$*
+```

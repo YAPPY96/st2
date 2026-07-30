@@ -1,29 +1,58 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, date, timedelta
 from typing import Optional
+from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 import os
 import json
 import threading
 import time
 import urllib.request
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+log = logging.getLogger("study-tracker")
+
+JST = ZoneInfo("Asia/Tokyo")
 
 from database import get_db, init_db
 from models import *
 from logic import calculate_next_srs, calc_daily_quota
 
-app = FastAPI()
+MY_USER_ID = os.getenv("SLACK_MENTION_USER_ID", "").strip()
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def db_conn():
+    conn = get_db()
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    import threading
+    t = threading.Thread(target=_notifier_loop, daemon=True)
+    t.start()
+    log.info("Background notifier thread started")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 SLACK_NOTIFIER_THREAD = None
@@ -65,11 +94,9 @@ def _collect_today_subject_progress(conn):
     return items
 
 def _build_slack_today_message(now_dt: datetime, items) -> str:
-    MY_USER_ID = "U0A10MG6AHZ" 
-    
     header = f"📚 今日タブ進捗 ({now_dt.strftime('%Y-%m-%d %H:%M')})"
     # 自分宛にメンションを飛ばす（これでスマホに通知が来やすくなる）
-    mention = f"<@{MY_USER_ID}> "
+    mention = f"<@{MY_USER_ID}> " if MY_USER_ID else ""
     if not items:
         return f"{mention}{header}\n題材がありません。"
     total_done = sum(x["done"] for x in items)
@@ -98,12 +125,12 @@ def send_today_progress_to_slack():
         items = _collect_today_subject_progress(conn)
     finally:
         conn.close()
-    message = _build_slack_today_message(datetime.now(), items)
+    message = _build_slack_today_message(datetime.now(JST), items)
     _post_to_slack(message)
     return {"sent": True, "subject_count": len(items)}
 
 def _seconds_until_next_hour(now_dt: datetime = None) -> int:
-    now_dt = now_dt or datetime.now()
+    now_dt = now_dt or datetime.now(JST)
     next_dt = (now_dt + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
     return max(1, int((next_dt - now_dt).total_seconds()))
 
@@ -112,7 +139,7 @@ def _notifier_loop():
         # 次の正時まで待機
         time.sleep(_seconds_until_next_hour())
         try:
-            now = datetime.now()
+            now = datetime.now(JST)
             # Slack: 7:00から20:00の間のみ送信
             if _slack_notifier_enabled() and 7 <= now.hour <= 20:
                 send_today_progress_to_slack()
@@ -127,15 +154,12 @@ def _notifier_loop():
         except Exception as e:
             print(f"Notifier loop failed: {e}")
 
-@app.on_event("startup")
-def on_startup():
-    global SLACK_NOTIFIER_THREAD
-    init_db()
-    # Slack または Blinko の自動送信が有効な場合にスレッドを開始
-    if SLACK_NOTIFIER_THREAD is None:
-        SLACK_NOTIFIER_THREAD = threading.Thread(target=_notifier_loop, daemon=True)
-        SLACK_NOTIFIER_THREAD.start()
-        print("Background notifier thread started")
+def verify_admin(x_admin_token: str = Header(default="")):
+    expected = os.getenv("ADMIN_TOKEN", "").strip()
+    if expected and x_admin_token != expected:
+        raise HTTPException(401, "unauthorized")
+    if not expected:
+        log.warning("ADMIN_TOKEN unset — admin endpoint is open")
 
 # ── Subjects ──────────────────────────────────────────────────
 @app.get("/api/subjects")
@@ -158,7 +182,7 @@ def list_subjects():
 @app.post("/api/subjects")
 def create_subject(data: SubjectCreate):
     conn = get_db()
-    now = datetime.now().isoformat()
+    now = datetime.now(JST).isoformat()
     cur = conn.cursor()
     cur.execute("INSERT INTO subjects (name, category, type_tag, created_at) VALUES (?,?,?,?)",
                 (data.name, data.category, data.type_tag, now))
@@ -249,9 +273,12 @@ def get_subject_quota(sid: int):
 @app.post("/api/problems/{pid}/record/{attempt}")
 def update_record(pid: int, attempt: int, data: RecordUpdate):
     conn = get_db()
-    today = date.today()
-    now_dt = datetime.now()
-    sid = conn.execute("SELECT subject_id FROM problems WHERE id=?", (pid,)).fetchone()[0]
+    today = datetime.now(JST).date()
+    now_dt = datetime.now(JST)
+    row = conn.execute("SELECT subject_id FROM problems WHERE id=?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Problem not found")
+    sid = row[0]
     conn.execute("""
         INSERT INTO records (problem_id, attempt, result, recorded_at) VALUES (?,?,?,?)
         ON CONFLICT(problem_id, attempt) DO UPDATE SET result=excluded.result, recorded_at=excluded.recorded_at
@@ -277,7 +304,7 @@ def update_record(pid: int, attempt: int, data: RecordUpdate):
 @app.patch("/api/problems/{pid}/status")
 def patch_problem_status(pid: int, data: ProblemStatusUpdate):
     conn = get_db()
-    today = date.today().isoformat()
+    today = datetime.now(JST).date().isoformat()
     if data.status == 1:
         conn.execute("UPDATE problems SET status=?, pass1_date=? WHERE id=?", (data.status, today, pid))
     elif data.status == 2:
@@ -291,7 +318,7 @@ def patch_problem_status(pid: int, data: ProblemStatusUpdate):
 # ── SRS ───────────────────────────────────────────────────────
 @app.get("/api/srs/queue")
 def srs_queue():
-    today = date.today().isoformat()
+    today = datetime.now(JST).date().isoformat()
     conn = get_db()
     # ソート順: state=1 (今日「忘れた」もの) を後に、それ以外(state=0,2)を前に。
     # その中で問題番号(sort_order)の昇順
@@ -316,15 +343,15 @@ def srs_queue():
 @app.post("/api/srs/review")
 def review_srs(data: SRSReview):
     conn = get_db()
-    today = date.today()
-    now_dt = datetime.now()
+    today = datetime.now(JST).date()
+    now_dt = datetime.now(JST)
     item = conn.execute("SELECT si.*, p.subject_id FROM srs_items si JOIN problems p ON p.id = si.problem_id WHERE si.problem_id=?", (data.problem_id,)).fetchone()
     if not item:
         conn.close()
         raise HTTPException(404, "SRS not found")
     
     s, d = calculate_next_srs(data.rating, item["stability"], item["difficulty"])
-    interval = round(s)
+    interval = max(1, round(s))
     due = today + timedelta(days=interval)
     
     conn.execute("UPDATE srs_items SET stability=?, difficulty=?, due_date=?, last_review=?, reps=(COALESCE(reps,0)+1), lapses=?, state=? WHERE problem_id=?",
@@ -350,7 +377,7 @@ def review_srs(data: SRSReview):
 # ── Stats ─────────────────────────────────────────────────────
 @app.get("/api/stats/today")
 def today_stats():
-    today = date.today().isoformat()
+    today = datetime.now(JST).date().isoformat()
     conn = get_db()
     try:
         # 停止中でない題材のみを対象とする
@@ -400,7 +427,7 @@ def today_stats():
 
 @app.get("/api/stats/hourly")
 def hourly_stats(day: Optional[str] = None):
-    day = day or date.today().isoformat()
+    day = day or datetime.now(JST).date().isoformat()
     conn = get_db()
     rows = conn.execute("""
         SELECT strftime('%H', timestamp) as hour, s.type_tag, al.action_type, COUNT(*) as cnt
@@ -410,6 +437,7 @@ def hourly_stats(day: Optional[str] = None):
     res = {"暗記": {}, "問題": {}}
     for r in rows:
         h, t, a = int(r["hour"]), r["type_tag"], ("review" if r["action_type"] == "srs" else "new")
+        res.setdefault(t, {})
         if h not in res[t]: res[t][h] = {"new": 0, "review": 0}
         res[t][h][a] = r["cnt"]
     conn.close()
@@ -453,7 +481,7 @@ def get_history():
         })
     return result
 
-@app.post("/api/admin/slack/today-notify")
+@app.post("/api/admin/slack/today-notify", dependencies=[Depends(verify_admin)])
 def notify_today_tab_to_slack_now():
     try:
         return send_today_progress_to_slack()
@@ -487,7 +515,7 @@ def spa(path: str):
     # 'api' で始まるパス、または空でないファイル拡張子を持つパス（staticファイル等）が
     # ここに来た場合は、SPAとして扱わず404を返す。
     # これにより、APIの打ち間違いや存在しない静的ファイルでindex.htmlが返るのを防ぐ。
-    if path.startswith("api") or path.startswith("/api"):
+    if path.split("/")[0] == "api":
         raise HTTPException(status_code=404)
     
     if "." in path and not path.endswith(".html"):
