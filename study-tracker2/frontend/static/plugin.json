@@ -1,0 +1,19 @@
+{
+  "name": "study-tracker2",
+  "author": "yasuf",
+  "url": "https://github.com/yourusername/study-tracker2",
+  "version": "1.0.0",
+  "minAppVersion": "0.0.0",
+  "displayName": {
+    "default": "Study Tracker 2",
+    "ja": "Study Tracker 2"
+  },
+  "description": {
+    "default": "Check today's study tasks and progress from study-tracker2",
+    "ja": "study-tracker2の今日の学習タスクと進捗を確認"
+  },
+  "readme": {
+    "default": "README.md",
+    "ja": "README.md"
+  }
+}

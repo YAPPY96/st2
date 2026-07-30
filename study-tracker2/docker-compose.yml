@@ -1,0 +1,39 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Tokyo
+      - SLACK_NOTIFY_ENABLED=${SLACK_NOTIFY_ENABLED:-false}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - BLINKO_API_URL=${BLINKO_API_URL:-}
+      - BLINKO_TOKEN=${BLINKO_TOKEN:-}
+    labels:
+      - "cloudflared=http://localhost:8000"
+      - "traefik.http.routers.study-tracker.entrypoints=web"
+      - "traefik.http.routers.study-tracker.rule=Host(`your-subdomain.your-domain.com`)"
+  traefik:
+    image: traefik:v2.10
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker"
+      - "--entrypoints.web.address=:80"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+    ports:
+      - "8081:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-cert:/letsencrypt
+    restart: unless-stopped
+volumes:
+  study_data:
+  traefik-cert:

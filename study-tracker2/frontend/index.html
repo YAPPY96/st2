@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#09090f">
+    <link rel="manifest" href="/manifest.json">
+    <title>学習記録</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hd">
+    <div>
+        <div class="hd-logo">📚 学習記録</div>
+        <div class="hd-date" id="hdDate"></div>
+    </div>
+    <div class="hd-streak" id="streakEl" style="display:none">🔥 <span id="streakNum">0</span>日</div>
+</div>
+
+<!-- TODAY BAR -->
+<div class="tb">
+    <div class="tb-row">
+        <div class="tb-stat" style="flex:1">
+            <span class="tb-lbl" style="margin-bottom:2px;display:block">本日のタスク達成率</span>
+            <div style="display:flex;align-items:baseline;gap:5px">
+                <span id="todayDone" style="font-size:18px;font-weight:900;color:var(--acc)">0</span>
+                <span style="font-size:11px;color:var(--t2)">/</span>
+                <span id="todayTotal" style="font-size:14px;font-weight:700;color:var(--t2)">0</span>
+                <span class="tb-lbl">タスク完了</span>
+            </div>
+        </div>
+        <div class="srs-badge" id="srsBadge" onclick="switchTabByName('dashboard')">
+            復習 <span id="srsPending">0</span>件
+        </div>
+    </div>
+    <div class="goal-bar-outer"><div class="goal-bar-inner" id="goalBar" style="width:0%"></div></div>
+    <div class="goal-pct" id="goalPct">今日 0 / 0タスク (0%)</div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+    <button class="tab" id="tab-dashboard" onclick="switchTab('dashboard',this)">🏠 今日</button>
+    <button class="tab on" id="tab-study" onclick="switchTab('study',this)">📖 学習</button>
+    <button class="tab" id="tab-history" onclick="switchTab('history',this)">📅 履歴</button>
+    <button class="tab" id="tab-manage" onclick="switchTab('manage',this)">⚙️ 管理</button>
+</div>
+
+<!-- PAGE: DASHBOARD -->
+<div class="page" id="page-dashboard">
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px">
+        <div class="activity-chart" id="chartAnkiContainer">
+            <div class="chart-title">🧠 暗記進捗 <span id="chartAnkiTotal" style="font-size:9px">0</span></div>
+            <div class="chart-bars" id="chartAnkiBars" style="height:80px"></div>
+            <div style="height:15px"></div>
+        </div>
+        <div class="activity-chart" id="chartProblemContainer">
+            <div class="chart-title">📝 問題進捗 <span id="chartProblemTotal" style="font-size:9px">0</span></div>
+            <div class="chart-bars" id="chartProblemBars" style="height:80px"></div>
+            <div style="height:15px"></div>
+        </div>
+    </div>
+    <div id="dashboardList"><div style="color:var(--t2);text-align:center;padding:50px 0">読込中…</div></div>
+</div>
+
+<!-- PAGE: STUDY -->
+<div class="page on" id="page-study">
+    <div class="sec"><div class="sec-t">題材一覧</div><button class="btn btn-p btn-sm" onclick="openAddModal()">＋ 追加</button></div>
+    <div id="subjectList"></div>
+    <div id="emptyStudy" class="empty" style="display:none"><div class="ico">📖</div><p>題材がまだありません</p></div>
+</div>
+
+<!-- PAGE: HISTORY -->
+<div class="page" id="page-history">
+    <div class="sec"><div class="sec-t">過去の記録</div></div>
+    <div id="historyList"></div>
+</div>
+
+<!-- PAGE: MANAGE -->
+<div class="page" id="page-manage">
+    <div class="sec"><div class="sec-t">題材管理</div><button class="btn btn-p btn-sm" onclick="openAddModal()">＋ 追加</button></div>
+    <div id="manageList"></div>
+    <div id="emptyManage" class="empty" style="display:none"><div class="ico">🗂️</div><p>題材を追加しましょう</p></div>
+
+    <div class="sec" style="margin-top:24px"><div class="sec-t">外部連携</div></div>
+    <div class="card" style="padding:16px">
+        <div style="font-size:14px; font-weight:700; margin-bottom:8px">Blinko 連携</div>
+        <p style="font-size:12px; color:var(--t2); margin-bottom:12px">学習進捗サマリーをBlinkoに送信します。</p>
+        <button class="btn btn-s btn-sm" onclick="syncToBlinko()">Blinkoに送信</button>
+    </div>
+</div>
+
+<!-- MODALS -->
+<div class="overlay" id="addOverlay" onclick="overlayClick(event,'addOverlay')">
+    <div class="modal">
+        <div class="modal-handle"></div>
+        <div class="modal-title">📝 題材を追加</div>
+        <div class="fg"><label class="flbl">カテゴリ</label><input class="fi" id="inCat" placeholder="例：数学"></div>
+        <div class="fg"><label class="flbl">題材名</label><input class="fi" id="inName"></div>
+        <div class="fg"><label class="flbl">題材タイプ</label>
+            <select class="fi" id="inType"><option value="問題">問題</option><option value="暗記">暗記</option></select>
+        </div>
+        <div class="fg"><label class="flbl">締切日</label><input class="fi" id="inDeadline" type="date"></div>
+        <div class="fg"><label class="flbl">入力方法</label>
+            <select class="fi" id="inMode" onchange="const m=this.value; document.getElementById('modeCount').style.display=m==='count'?'block':'none'; document.getElementById('modeManual').style.display=m==='manual'?'block':'none';">
+                <option value="count">自動生成</option><option value="manual">手動入力</option>
+            </select>
+        </div>
+        <div id="modeCount">
+            <div class="fg"><label class="flbl">問題数</label><input class="fi" id="inCount" type="number" value="50"></div>
+            <div class="fg"><label class="flbl">プレフィックス</label><input class="fi" id="inPrefix"></div>
+        </div>
+        <div id="modeManual" style="display:none">
+            <div class="fg"><label class="flbl">リスト（1行1問）</label><textarea class="fi" id="inList"></textarea></div>
+        </div>
+        <button class="btn btn-p btn-w" onclick="createSubject()">作成</button>
+        <button class="btn btn-s btn-w" style="margin-top:8px" onclick="closeModal('addOverlay')">キャンセル</button>
+    </div>
+</div>
+
+<div class="overlay" id="editOverlay" onclick="overlayClick(event,'editOverlay')">
+    <div class="modal">
+        <div class="modal-handle"></div>
+        <div class="modal-title">✏️ 題材を編集</div>
+        <input type="hidden" id="editTargetId">
+        <div class="fg"><label class="flbl">カテゴリ</label><input class="fi" id="editCat"></div>
+        <div class="fg"><label class="flbl">題材名</label><input class="fi" id="editName"></div>
+        <div class="fg"><label class="flbl">題材タイプ</label>
+            <select class="fi" id="editType"><option value="問題">問題</option><option value="暗記">暗記</option></select>
+        </div>
+        <div class="fg"><label class="flbl">締切日</label><input class="fi" id="editDeadline" type="date"></div>
+        <button class="btn btn-p btn-w" onclick="saveEditSubject()">更新</button>
+        <button class="btn btn-s btn-w" style="margin-top:8px" onclick="closeModal('editOverlay')">キャンセル</button>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- SCRIPTS -->
+<script src="/static/js/api.js?v=20260706_v1"></script>
+<script src="/static/js/ui.js?v=20260706_v1"></script>
+<script src="/static/js/app.js?v=20260706_v1"></script>
+<script type="systemjs-importmap">
+{
+  "imports": {
+    "preact": "https://esm.sh/preact@10.19.6",
+    "preact/compat": "https://esm.sh/preact@10.19.6/compat",
+    "preact/hooks": "https://esm.sh/preact@10.19.6/hooks"
+  }
+}
+</script>
+<script type="module" src="/static/study-plugin.js"></script>
+</body>
+</html>
