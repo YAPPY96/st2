@@ -11,11 +11,20 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Tokyo
+      # - SLACK_MENTION_USER_ID=Uxxxxxxxxxx
+      # - ADMIN_TOKEN=change-me
+      # - CORS_ORIGINS=https://study.example.com
       - SLACK_NOTIFY_ENABLED=${SLACK_NOTIFY_ENABLED:-false}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       - BLINKO_API_URL=${BLINKO_API_URL:-}
       - BLINKO_TOKEN=${BLINKO_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/subjects', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     labels:
+      - "traefik.enable=true"
       - "cloudflared=http://localhost:8000"
       - "traefik.http.routers.study-tracker.entrypoints=web"
       - "traefik.http.routers.study-tracker.rule=Host(`your-subdomain.your-domain.com`)"
@@ -35,5 +44,4 @@ services:
       - ./traefik-cert:/letsencrypt
     restart: unless-stopped
 volumes:
-  study_data:
   traefik-cert:
